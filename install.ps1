@@ -4,7 +4,10 @@ param (
   $UninstallSpotifyStoreEdition = (Read-Host -Prompt 'Uninstall Spotify Windows Store edition if it exists (Y/N)') -eq 'y',
   [Parameter()]
   [switch]
-  $UpdateSpotify
+  $UpdateSpotify,
+  [Parameter()]
+  [switch]
+  $InstallSpicetify
 )
 
 # Ignore errors from `Stop-Process`
@@ -12,283 +15,286 @@ $PSDefaultParameterValues['Stop-Process:ErrorAction'] = [System.Management.Autom
 
 [System.Version] $minimalSupportedSpotifyVersion = '1.2.8.923'
 
-function Get-File
-{
+########## Helper Functions ##########
+
+function Get-File {
   param (
-    [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
-    [ValidateNotNullOrEmpty()]
-    [System.Uri]
-    $Uri,
-    [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
-    [ValidateNotNullOrEmpty()]
-    [System.IO.FileInfo]
-    $TargetFile,
-    [Parameter(ValueFromPipelineByPropertyName)]
-    [ValidateNotNullOrEmpty()]
-    [Int32]
-    $BufferSize = 1,
-    [Parameter(ValueFromPipelineByPropertyName)]
-    [ValidateNotNullOrEmpty()]
-    [ValidateSet('KB, MB')]
-    [String]
-    $BufferUnit = 'MB',
-    [Parameter(ValueFromPipelineByPropertyName)]
-    [ValidateNotNullOrEmpty()]
-    [ValidateSet('KB, MB')]
-    [Int32]
-    $Timeout = 10000
+    [Parameter(Mandatory)]
+    [System.Uri]$Uri,
+    [Parameter(Mandatory)]
+    [System.IO.FileInfo]$TargetFile,
+    [int]$Timeout = 15000
   )
 
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-  $useBitTransfer = $null -ne (Get-Module -Name BitsTransfer -ListAvailable) -and ($PSVersionTable.PSVersion.Major -le 5) -and ((Get-Service -Name BITS).StartType -ne [System.ServiceProcess.ServiceStartMode]::Disabled)
-
-  if ($useBitTransfer)
-  {
-    Write-Information -MessageData 'Using a fallback BitTransfer method since you are running Windows PowerShell'
-    Start-BitsTransfer -Source $Uri -Destination "$($TargetFile.FullName)"
+  
+  try {
+    Invoke-WebRequest -Uri $Uri -OutFile $TargetFile.FullName -TimeoutSec ($Timeout / 1000) -UseBasicParsing
   }
-  else
-  {
-    $request = [System.Net.HttpWebRequest]::Create($Uri)
-    $request.set_Timeout($Timeout) #15 second timeout
-    $response = $request.GetResponse()
-    $totalLength = [System.Math]::Floor($response.get_ContentLength() / 1024)
-    $responseStream = $response.GetResponseStream()
-    $targetStream = New-Object -TypeName ([System.IO.FileStream]) -ArgumentList "$($TargetFile.FullName)", Create
-    switch ($BufferUnit)
-    {
-      'KB' { $BufferSize = $BufferSize * 1024 }
-      'MB' { $BufferSize = $BufferSize * 1024 * 1024 }
-      Default { $BufferSize = 1024 * 1024 }
-    }
-    Write-Verbose -Message "Buffer size: $BufferSize B ($($BufferSize/("1$BufferUnit")) $BufferUnit)"
-    $buffer = New-Object byte[] $BufferSize
-    $count = $responseStream.Read($buffer, 0, $buffer.length)
-    $downloadedBytes = $count
-    $downloadedFileName = $Uri -split '/' | Select-Object -Last 1
-    while ($count -gt 0)
-    {
-      $targetStream.Write($buffer, 0, $count)
-      $count = $responseStream.Read($buffer, 0, $buffer.length)
-      $downloadedBytes = $downloadedBytes + $count
-      Write-Progress -Activity "Downloading file '$downloadedFileName'" -Status "Downloaded ($([System.Math]::Floor($downloadedBytes/1024))K of $($totalLength)K): " -PercentComplete ((([System.Math]::Floor($downloadedBytes / 1024)) / $totalLength) * 100)
-    }
-
-    Write-Progress -Activity "Finished downloading file '$downloadedFileName'"
-
-    $targetStream.Flush()
-    $targetStream.Close()
-    $targetStream.Dispose()
-    $responseStream.Dispose()
+  catch {
+    Write-Error "Download failed for '$($Uri)': $_"
+    throw
   }
 }
 
-function Test-SpotifyVersion
-{
+function Stop-SpotifyProcesses {
   param (
-    [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
-    [ValidateNotNullOrEmpty()]
-    [System.Version]
-    $MinimalSupportedVersion,
-    [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
-    [System.Version]
-    $TestedVersion
+    [string]$Context = "Stopping Spotify processes"
   )
+  Write-Host "$Context..."
+  Get-Process -Name "Spotify*" -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Seconds 2
+  $maxWait = 10
+  $waited = 0
+  while ((Get-Process -Name "Spotify*" -ErrorAction SilentlyContinue) -and ($waited -lt $maxWait)) {
+    Start-Sleep -Seconds 1
+    $waited++
+  }
+  Get-Process -Name "Spotify*" -ErrorAction SilentlyContinue | Stop-Process -Force
+}
 
-  process
-  {
-    return ($MinimalSupportedVersion.CompareTo($TestedVersion) -le 0)
+function Test-SpotifyVersion {
+  param (
+    [Parameter(Mandatory)]
+    [System.Version]$MinimalSupportedVersion,
+    [Parameter(Mandatory)]
+    [System.Version]$TestedVersion
+  )
+  return ($MinimalSupportedVersion.CompareTo($TestedVersion) -le 0)
+}
+
+function Test-BlockTheSpotInjection {
+  param (
+    [string]$SpotifyDirectory
+  )
+  $dpapiDll = Join-Path -Path $SpotifyDirectory -ChildPath 'dpapi.dll'
+  $configIni = Join-Path -Path $SpotifyDirectory -ChildPath 'config.ini'
+  return (Test-Path -LiteralPath $dpapiDll) -and (Test-Path -LiteralPath $configIni)
+}
+
+function Start-SpotifyWithRetry {
+  param (
+    [string]$SpotifyDirectory,
+    [string]$SpotifyExecutable,
+    [int]$MaxRetries = 3
+  )
+  for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+    Write-Host "Starting Spotify (Attempt $attempt/$MaxRetries)..." -ForegroundColor Cyan
+    Stop-SpotifyProcesses -Context "Preparing for attempt $attempt"
+    Start-Process -WorkingDirectory $SpotifyDirectory -FilePath $SpotifyExecutable
+    Start-Sleep -Seconds 10 # Allow time for Spotify to load the DLL
+    $spotifyProcess = Get-Process -Name "Spotify" -ErrorAction SilentlyContinue
+    if ($spotifyProcess) {
+      Write-Host "Spotify process started." -ForegroundColor Green
+      return $true
+    }
+  }
+  Write-Warning "After $MaxRetries attempts, Spotify process could not be confirmed as running."
+  return $false
+}
+
+########## Installation Step Functions ##########
+
+function Install-Spotify {
+  param(
+    [string]$SpotifyDirectory
+  )
+  Write-Host "`n========================================" -ForegroundColor Blue
+  Write-Host " Installing/Updating Spotify" -ForegroundColor Cyan
+  Write-Host "========================================" -ForegroundColor Blue
+  
+  Write-Host 'Downloading the latest Spotify full setup, please wait...'
+  $spotifySetupFilePath = Join-Path -Path $PWD -ChildPath 'SpotifyFullSetup.exe'
+  try {
+    if ([Environment]::Is64BitOperatingSystem) {
+      $uri = 'https://download.scdn.co/SpotifyFullSetupX64.exe'
+    }
+    else {
+      $uri = 'https://download.scdn.co/SpotifyFullSetup.exe'
+    }
+    Get-File -Uri $uri -TargetFile $spotifySetupFilePath
+  }
+  catch {
+    Write-Output $_
+    Read-Host 'Press any key to exit...'
+    exit
+  }
+  
+  Write-Host 'Running installation...'
+  Start-Process -FilePath $spotifySetupFilePath -Wait
+  
+  while ($null -eq (Get-Process -Name Spotify -ErrorAction SilentlyContinue)) {
+    Start-Sleep -Milliseconds 200
+  }
+  Stop-SpotifyProcesses -Context "Stopping Spotify after installation"
+}
+
+function Install-Spicetify {
+  param (
+    [string]$SpotifyDirectory,
+    [string]$SpotifyExecutable
+  )
+  Write-Host "`n========================================" -ForegroundColor Blue
+  Write-Host " Installing Spicetify" -ForegroundColor Cyan
+  Write-Host "========================================" -ForegroundColor Blue
+  Stop-SpotifyProcesses -Context "Preparing for Spicetify installation"
+  Start-Process -WorkingDirectory $SpotifyDirectory -FilePath $SpotifyExecutable -WindowStyle Minimized
+  Start-Sleep -Seconds 5
+  Stop-SpotifyProcesses -Context "Closing Spotify after initialization for Spicetify"
+  
+  try {
+    Write-Host "Installing/Updating Spicetify CLI..." -ForegroundColor Green
+    Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-cli/master/install.ps1" | Invoke-Expression
+    Write-Host "Installing Spicetify Marketplace..." -ForegroundColor Green
+    Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.ps1" | Invoke-Expression
+    return $true
+  }
+  catch {
+    Write-Warning "Failed to install Spicetify: $($_.Exception.Message)"
+    return $false
   }
 }
+
+function Install-BlockTheSpotPatch {
+  param (
+    [string]$SpotifyDirectory,
+    [bool]$Is64Bit,
+    [string]$WorkingDirectory = $PWD
+  )
+  Write-Host "`n========================================" -ForegroundColor Blue
+  Write-Host " Installing BlockTheSpot" -ForegroundColor Cyan
+  Write-Host "========================================" -ForegroundColor Blue
+  
+  Stop-SpotifyProcesses -Context "Preparing for BlockTheSpot patch"
+  
+  $elfPath = Join-Path -Path $WorkingDirectory -ChildPath 'chrome_elf.zip'
+  try {
+    if ($Is64Bit) {
+      $uri = 'https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.zip'
+    }
+    else {
+      # Use a fixed older version for 32-bit as 'latest' may not support it
+      $uri = 'https://github.com/mrpond/BlockTheSpot/releases/download/2023.5.20.80/chrome_elf.zip'
+    }
+    Get-File -Uri $uri -TargetFile $elfPath
+    
+    Expand-Archive -Force -LiteralPath $elfPath -DestinationPath $WorkingDirectory
+    Remove-Item -LiteralPath $elfPath -Force
+
+    Write-Host 'Patching Spotify...'
+    $patchFiles = @(
+      Join-Path -Path $WorkingDirectory -ChildPath 'dpapi.dll'
+      Join-Path -Path $WorkingDirectory -ChildPath 'config.ini'
+    )
+    Copy-Item -LiteralPath $patchFiles -Destination $SpotifyDirectory -Force
+    Write-Host 'Patching Complete!' -ForegroundColor Green
+  }
+  catch {
+    Write-Error "Failed to download or apply BlockTheSpot patch: $_"
+    Read-Host 'Press any key to exit...'
+    exit
+  }
+}
+
+########## Main Installation Logic ##########
 
 Write-Host @'
-**********************************
-Authors: @Nuzair46, @KUTlime
-**********************************
+========================================
+Authors: @Nuzair46, @KUTlime, @O-ElAlami
+========================================
 '@
 
 $spotifyDirectory = Join-Path -Path $env:APPDATA -ChildPath 'Spotify'
 $spotifyExecutable = Join-Path -Path $spotifyDirectory -ChildPath 'Spotify.exe'
-$spotifyApps = Join-Path -Path $spotifyDirectory -ChildPath 'Apps'
+$spicetifyInstalledSuccessfully = $false
 
-[System.Version] $actualSpotifyClientVersion = (Get-ChildItem -LiteralPath $spotifyExecutable -ErrorAction:SilentlyContinue).VersionInfo.ProductVersionRaw
+Stop-SpotifyProcesses -Context "Initial Spotify shutdown"
 
-Write-Host "Stopping Spotify...`n"
-Stop-Process -Name Spotify
-Stop-Process -Name SpotifyWebHelper
-
-if ($PSVersionTable.PSVersion.Major -ge 7)
-{
+if ($PSVersionTable.PSVersion.Major -ge 7) {
   Import-Module Appx -UseWindowsPowerShell -WarningAction:SilentlyContinue
 }
 
-if (Get-AppxPackage -Name SpotifyAB.SpotifyMusic)
-{
-  Write-Host "The Microsoft Store version of Spotify has been detected which is not supported.`n"
-
-  if ($UninstallSpotifyStoreEdition)
-  {
-    Write-Host "Uninstalling Spotify.`n"
+if (Get-AppxPackage -Name SpotifyAB.SpotifyMusic) {
+  Write-Host "The Microsoft Store version of Spotify is not supported.`n"
+  if ($UninstallSpotifyStoreEdition) {
+    Write-Host "Uninstalling Spotify Store version.`n"
     Get-AppxPackage -Name SpotifyAB.SpotifyMusic | Remove-AppxPackage
   }
-  else
-  {
-    Read-Host "Exiting...`nPress any key to exit..."
+  else {
+    Read-Host "Please uninstall the Store version of Spotify to continue. Press any key to exit..."
     exit
   }
 }
 
 Push-Location -LiteralPath $env:TEMP
-try
-{
-  # Unique directory name based on time
-  New-Item -Type Directory -Name "BlockTheSpot-$(Get-Date -UFormat '%Y-%m-%d_%H-%M-%S')" |
-  Convert-Path |
-  Set-Location
-}
-catch
-{
-  Write-Output $_
-  Read-Host 'Press any key to exit...'
-  exit
-}
+$tempWorkDir = New-Item -Type Directory -Name "BlockTheSpot-$(Get-Date -UFormat '%Y-%m-%d_%H-%M-%S')"
+Set-Location -Path $tempWorkDir.FullName
+
+########## Refined Installation Flow ##########
 
 $spotifyInstalled = Test-Path -LiteralPath $spotifyExecutable
-
-if (-not $spotifyInstalled) {
-  $unsupportedClientVersion = $true
-} else {
-  $unsupportedClientVersion = ($actualSpotifyClientVersion | Test-SpotifyVersion -MinimalSupportedVersion $minimalSupportedSpotifyVersion) -eq $false
-}
-
-if (-not $UpdateSpotify -and $unsupportedClientVersion)
-{
-  if ((Read-Host -Prompt 'In order to install Block the Spot, your Spotify client must be updated. Do you want to continue? (Y/N)') -ne 'y')
-  {
-    exit
+$unsupportedClientVersion = $false
+if ($spotifyInstalled) {
+  $actualSpotifyClientVersion = (Get-ChildItem -LiteralPath $spotifyExecutable).VersionInfo.ProductVersionRaw
+  if (-not (Test-SpotifyVersion -MinimalSupportedVersion $minimalSupportedSpotifyVersion -TestedVersion $actualSpotifyClientVersion)) {
+    $unsupportedClientVersion = $true
+    Write-Host "Your Spotify version ($actualSpotifyClientVersion) is unsupported. An update is required." -ForegroundColor Yellow
   }
 }
 
-if (-not $spotifyInstalled -or $UpdateSpotify -or $unsupportedClientVersion)
-{
-  Write-Host 'Downloading the latest Spotify full setup, please wait...'
-  $spotifySetupFilePath = Join-Path -Path $PWD -ChildPath 'SpotifyFullSetup.exe'
-  try
-  {
-    if ([Environment]::Is64BitOperatingSystem) { # Check if the computer is running a 64-bit version of Windows
-      $uri = 'https://download.scdn.co/SpotifyFullSetupX64.exe'
-    } else {
-      $uri = 'https://download.scdn.co/SpotifyFullSetup.exe'
-    }
-    Get-File -Uri $uri -TargetFile "$spotifySetupFilePath"
-  }
-  catch
-  {
-    Write-Output $_
-    Read-Host 'Press any key to exit...'
-    exit
-  }
-  New-Item -Path $spotifyDirectory -ItemType:Directory -Force | Write-Verbose
-
-  [System.Security.Principal.WindowsPrincipal] $principal = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-  $isUserAdmin = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
-  Write-Host 'Running installation...'
-  if ($isUserAdmin)
-  {
-    Write-Host
-    Write-Host 'Creating scheduled task...'
-    $apppath = 'powershell.exe'
-    $taskname = 'Spotify install'
-    $action = New-ScheduledTaskAction -Execute $apppath -Argument "-NoLogo -NoProfile -Command & `'$spotifySetupFilePath`'"
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -WakeToRun
-    Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskname -Settings $settings -Force | Write-Verbose
-    Write-Host 'The install task has been scheduled. Starting the task...'
-    Start-ScheduledTask -TaskName $taskname
-    Start-Sleep -Seconds 2
-    Write-Host 'Unregistering the task...'
-    Unregister-ScheduledTask -TaskName $taskname -Confirm:$false
-    Start-Sleep -Seconds 2
-  }
-  else
-  {
-    Start-Process -FilePath "$spotifySetupFilePath"
-  }
-
-  while ($null -eq (Get-Process -Name Spotify -ErrorAction SilentlyContinue))
-  {
-    # Waiting until installation complete
-    Start-Sleep -Milliseconds 100
-  }
-
-
-  Write-Host 'Stopping Spotify...Again'
-
-  Stop-Process -Name Spotify
-  Stop-Process -Name SpotifyWebHelper
-  if ([Environment]::Is64BitOperatingSystem) { # Check if the computer is running a 64-bit version of Windows
-    Stop-Process -Name SpotifyFullSetupX64
-  } else {
-     Stop-Process -Name SpotifyFullSetup
-  }
+if (-not $spotifyInstalled -or $UpdateSpotify -or $unsupportedClientVersion) {
+  Install-Spotify -SpotifyDirectory $spotifyDirectory
+}
+else {
+  Write-Host "Spotify is already installed and up to date." -ForegroundColor Green
 }
 
-Write-Host "Downloading latest patch (chrome_elf.zip)...`n"
-$elfPath = Join-Path -Path $PWD -ChildPath 'chrome_elf.zip'
-try
-{
-  $bytes = [System.IO.File]::ReadAllBytes($spotifyExecutable)
-  $peHeader = [System.BitConverter]::ToUInt16($bytes[0x3C..0x3D], 0)
-  $is64Bit = $bytes[$peHeader + 4] -eq 0x64
-
-  if ($is64Bit) {
-    $uri = 'https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.zip'
-  } else {
-    Write-Host 'At the moment, the ad blocker may not work properly as the x86 architecture has not received a new update.'
-    $uri = 'https://github.com/mrpond/BlockTheSpot/releases/download/2023.5.20.80/chrome_elf.zip'
-  }
-
-  Get-File -Uri $uri -TargetFile "$elfPath"
-}
-catch
-{
-  Write-Output $_
-  Start-Sleep
+if ($InstallSpicetify) {
+  $spicetifyInstalledSuccessfully = Install-Spicetify -SpotifyDirectory $spotifyDirectory -SpotifyExecutable $spotifyExecutable
 }
 
-Expand-Archive -Force -LiteralPath "$elfPath" -DestinationPath $PWD
-Remove-Item -LiteralPath "$elfPath" -Force
+# Always install/re-install BlockTheSpot after other steps
+$bytes = [System.IO.File]::ReadAllBytes($spotifyExecutable)
+$peHeader = [System.BitConverter]::ToUInt16($bytes[0x3C..0x3D], 0)
+$is64Bit = $bytes[$peHeader + 4] -eq 0x64
+Install-BlockTheSpotPatch -SpotifyDirectory $spotifyDirectory -Is64Bit $is64Bit -WorkingDirectory $PWD
 
-Write-Host 'Patching Spotify...'
-$patchFiles = (Join-Path -Path $PWD -ChildPath 'dpapi.dll'), (Join-Path -Path $PWD -ChildPath 'config.ini')
+########## Finalization and Restart ##########
 
-Copy-Item -LiteralPath $patchFiles -Destination "$spotifyDirectory"
-
-# function Install-VcRedist {
-#   $architecture = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
-#   # https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170
-#   $vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.$($architecture).exe"
-#   $registryPath = "HKLM:\Software\Microsoft\VisualStudio\14.0\VC\Runtimes\$architecture"
-#   $installedVersion = [version]((Get-ItemProperty $registryPath -ErrorAction SilentlyContinue).Version).Substring(1)
-#   $latestVersion = [version]"14.40.33810.0"
-#
-#   if ($installedVersion -lt $latestVersion) {
-#       $vcRedistFile = Join-Path -Path $PWD -ChildPath "vc_redist.$architecture.exe"
-#       Write-Host "Downloading and installing vc_redist.$architecture.exe..."
-#       Get-File -Uri $vcRedistUrl -TargetFile $vcRedistFile
-#       Start-Process -FilePath $vcRedistFile -ArgumentList "/install /quiet /norestart" -Wait
-#   }
-# }
-#
-# Install-VcRedist
-
-$tempDirectory = $PWD
 Pop-Location
+Remove-Item -LiteralPath $tempWorkDir.FullName -Recurse -Force
 
-Remove-Item -LiteralPath $tempDirectory -Recurse
+Write-Host "`nFinalizing installation and starting Spotify..." -ForegroundColor Cyan
+Start-SpotifyWithRetry -SpotifyDirectory $spotifyDirectory -SpotifyExecutable $spotifyExecutable
 
-Write-Host 'Patching Complete, starting Spotify...'
+########## Installation Summary ##########
 
-Start-Process -WorkingDirectory $spotifyDirectory -FilePath $spotifyExecutable
-Write-Host 'Done.'
+Write-Host "`n========================================" -ForegroundColor Blue
+Write-Host " Installation Summary" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Blue
+
+if (Test-BlockTheSpotInjection -SpotifyDirectory $spotifyDirectory) {
+  Write-Host "[OK] BlockTheSpot files are properly installed." -ForegroundColor Green
+  if (Get-Process -Name "Spotify" -ErrorAction SilentlyContinue) {
+    Write-Host "[OK] Spotify is running with BlockTheSpot active." -ForegroundColor Green
+  }
+  else {
+    Write-Host "[WARNING] Spotify is not currently running. BlockTheSpot will activate on next start." -ForegroundColor Yellow
+  }
+}
+else {
+  Write-Host "[ERROR] BlockTheSpot installation failed. Please check antivirus settings and re-run." -ForegroundColor Red
+}
+
+if ($InstallSpicetify) {
+  if ($spicetifyInstalledSuccessfully) {
+    Write-Host "[OK] Spicetify and Marketplace installed successfully." -ForegroundColor Green
+  }
+  else {
+    Write-Host "[ERROR] Spicetify installation failed." -ForegroundColor Red
+  }
+}
+
+Write-Host "`n[INFO] If ads still appear, restart Spotify manually." -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Blue
+Write-Host "`nDone." -ForegroundColor Green
