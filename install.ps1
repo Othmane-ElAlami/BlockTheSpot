@@ -23,17 +23,34 @@ function Get-File {
     [System.Uri]$Uri,
     [Parameter(Mandatory)]
     [System.IO.FileInfo]$TargetFile,
-    [int]$Timeout = 15000
+    [int]$Timeout = 30000,
+    [int]$MaxRetries = 3,
+    [int]$RetryDelaySeconds = 5
   )
 
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  [Net.ServicePointManager]::DefaultConnectionLimit = 10
   
-  try {
-    Invoke-WebRequest -Uri $Uri -OutFile $TargetFile.FullName -TimeoutSec ($Timeout / 1000) -UseBasicParsing
-  }
-  catch {
-    Write-Error "Download failed for '$($Uri)': $_"
-    throw
+  $attempt = 0
+  while ($attempt -lt $MaxRetries) {
+    $attempt++
+    try {
+      Write-Host "Downloading from $Uri (Attempt $attempt/$MaxRetries)..."
+      Invoke-WebRequest -Uri $Uri -OutFile $TargetFile.FullName -TimeoutSec ($Timeout / 1000) -UseBasicParsing
+      Write-Host "Download successful!" -ForegroundColor Green
+      return
+    }
+    catch {
+      Write-Warning "Download attempt $attempt failed: $($_.Exception.Message)"
+      if ($attempt -lt $MaxRetries) {
+        Write-Host "Retrying in $RetryDelaySeconds seconds..."
+        Start-Sleep -Seconds $RetryDelaySeconds
+      }
+      else {
+        Write-Error "Download failed for '$($Uri)' after $MaxRetries attempts: $_"
+        throw
+      }
+    }
   }
 }
 
@@ -132,7 +149,9 @@ function Install-Spotify {
 function Install-Spicetify {
   param (
     [string]$SpotifyDirectory,
-    [string]$SpotifyExecutable
+    [string]$SpotifyExecutable,
+    [int]$MaxRetries = 3,
+    [int]$RetryDelaySeconds = 5
   )
   Write-Host "`n========================================" -ForegroundColor Blue
   Write-Host " Installing Spicetify" -ForegroundColor Cyan
@@ -142,16 +161,32 @@ function Install-Spicetify {
   Start-Sleep -Seconds 5
   Stop-SpotifyProcesses -Context "Closing Spotify after initialization for Spicetify"
   
-  try {
-    Write-Host "Installing/Updating Spicetify CLI..." -ForegroundColor Green
-    Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-cli/master/install.ps1" | Invoke-Expression
-    Write-Host "Installing Spicetify Marketplace..." -ForegroundColor Green
-    Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.ps1" | Invoke-Expression
-    return $true
-  }
-  catch {
-    Write-Warning "Failed to install Spicetify: $($_.Exception.Message)"
-    return $false
+  $attempt = 0
+  while ($attempt -lt $MaxRetries) {
+    $attempt++
+    try {
+      Write-Host "Installing/Updating Spicetify CLI (Attempt $attempt/$MaxRetries)..." -ForegroundColor Green
+      $spicetifyScript = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-cli/master/install.ps1" -TimeoutSec 30 -ErrorAction Stop
+      $spicetifyScript | Invoke-Expression
+      
+      Write-Host "Installing Spicetify Marketplace (Attempt $attempt/$MaxRetries)..." -ForegroundColor Green
+      $marketplaceScript = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.ps1" -TimeoutSec 30 -ErrorAction Stop
+      $marketplaceScript | Invoke-Expression
+      
+      Write-Host "Spicetify installation successful!" -ForegroundColor Green
+      return $true
+    }
+    catch {
+      Write-Warning "Spicetify installation attempt $attempt failed: $($_.Exception.Message)"
+      if ($attempt -lt $MaxRetries) {
+        Write-Host "Retrying in $RetryDelaySeconds seconds..."
+        Start-Sleep -Seconds $RetryDelaySeconds
+      }
+      else {
+        Write-Warning "Failed to install Spicetify after $MaxRetries attempts: $($_.Exception.Message)"
+        return $false
+      }
+    }
   }
 }
 
