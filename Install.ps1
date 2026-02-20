@@ -171,9 +171,21 @@ function Install-Spicetify {
       
       Write-Host "Installing Spicetify Marketplace (Attempt $attempt/$MaxRetries)..." -ForegroundColor Green
       $marketplaceScript = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.ps1" -TimeoutSec 30 -ErrorAction Stop
-      $marketplaceScript | Invoke-Expression
       
-      Write-Host "Spicetify installation successful!" -ForegroundColor Green
+      # Automate the confirmation prompt for Spicetify Marketplace by echoing Y
+      "Y`n" | Invoke-Expression $marketplaceScript
+      
+      Write-Host "Configuring and enabling lyrics-plus..." -ForegroundColor Green
+      # The spicetify executable should be in PATH after install, but let's be safe
+      $spicetifyExe = "spicetify"
+      if (Test-Path "$env:LOCALAPPDATA\spicetify\spicetify.exe") {
+        $spicetifyExe = "$env:LOCALAPPDATA\spicetify\spicetify.exe"
+      }
+      
+      & $spicetifyExe config custom_apps lyrics-plus
+      & $spicetifyExe apply
+      
+      Write-Host "Spicetify and lyrics-plus installation successful!" -ForegroundColor Green
       return $true
     }
     catch {
@@ -334,6 +346,29 @@ if (Test-BlockTheSpotInjection -SpotifyDirectory $spotifyDirectory) {
 }
 else {
   Write-Host "[ERROR] BlockTheSpot installation failed. Please check antivirus settings and re-run." -ForegroundColor Red
+}
+
+if ($InstallSpicetify) {
+  if ($spicetifyInstalledSuccessfully) {
+    Write-Host "[OK] Spicetify and Marketplace installed successfully." -ForegroundColor Green
+    
+    # Final check for Spicetify App modification
+    $configIniContent = Get-Content -Path (Join-Path -Path $spotifyDirectory -ChildPath 'config.ini') -ErrorAction SilentlyContinue
+    if ($configIniContent -match "lyrics-plus") {
+      Write-Host "[OK] lyrics-plus extension is validated and active." -ForegroundColor Green
+    }
+  }
+  else {
+    Write-Host "[ERROR] Spicetify installation failed." -ForegroundColor Red
+  }
+}
+
+# Final health check combining both
+if ((Test-BlockTheSpotInjection -SpotifyDirectory $spotifyDirectory) -and $spicetifyInstalledSuccessfully) {
+  Write-Host "`n[SUCCESS] BlockTheSpot + Spicetify combined installation is completely validated and active!" -ForegroundColor Magenta
+}
+else {
+  Write-Host "`n[WARNING] Installation completed but some components may not be fully active. Please review the logs." -ForegroundColor Yellow
 }
 
 if ($InstallSpicetify) {

@@ -15,17 +15,17 @@
 
 ## Installation
 
-You can install this mod by simply downloading and running the [install.bat](https://raw.githack.com/Othmane-ElAlami/BlockTheSpot/master/install.bat) file.
+You can install this mod by simply downloading and running the [Install.bat](https://raw.githack.com/Othmane-ElAlami/BlockTheSpot/master/Install.bat) file.
 
 Alternatively, you can run the fully automated installation via PowerShell:
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-Expression "& { $(Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Othmane-ElAlami/BlockTheSpot/master/install.ps1') } -UninstallSpotifyStoreEdition"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-Expression "& { $(Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Othmane-ElAlami/BlockTheSpot/master/Install.ps1') } -UninstallSpotifyStoreEdition"
 ```
 
 ## Uninstallation
 
-If you wish to completely restore Spotify to its original state, download and run the [uninstall.bat](https://raw.githack.com/Othmane-ElAlami/BlockTheSpot/master/uninstall.bat) script.
+If you wish to completely restore Spotify to its original state, download and run the [Uninstall.bat](https://raw.githack.com/Othmane-ElAlami/BlockTheSpot/master/Uninstall.bat) script.
 
 This will restore Spicetify settings, remove the Spicetify directories (`%APPDATA%\spicetify` and `%LOCALAPPDATA%\spicetify`), and delete `dpapi.dll` and `config.ini` from the Spotify directory.
 
