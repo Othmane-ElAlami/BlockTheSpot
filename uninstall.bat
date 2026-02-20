@@ -16,11 +16,19 @@ if /i "%UserInput%"=="y" (
     echo - Removed Spicetify
 
     echo Removing BlockTheSpot files...
-    if exist "%APPDATA%\Spotify\dpapi.dll" (
-        del /q "%APPDATA%\Spotify\dpapi.dll" >NUL 2>&1
-        echo - Removed dpapi.dll
-    ) else (
-        echo - dpapi.dll not found
+    if exist "%APPDATA%\Spotify\blockthespot.dll" (
+        del /q "%APPDATA%\Spotify\blockthespot.dll" >NUL 2>&1
+        echo - Removed blockthespot.dll
+    )
+    
+    if exist "%APPDATA%\Spotify\chrome_elf.dll" (
+        del /q "%APPDATA%\Spotify\chrome_elf.dll" >NUL 2>&1
+        echo - Removed patched chrome_elf.dll
+    )
+    
+    if exist "%APPDATA%\Spotify\chrome_elf_required.dll" (
+        ren "%APPDATA%\Spotify\chrome_elf_required.dll" "chrome_elf.dll" >NUL 2>&1
+        echo - Restored original chrome_elf.dll
     )
     
     if exist "%APPDATA%\Spotify\config.ini" (

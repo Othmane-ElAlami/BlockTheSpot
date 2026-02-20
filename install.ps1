@@ -83,9 +83,10 @@ function Test-BlockTheSpotInjection {
   param (
     [string]$SpotifyDirectory
   )
-  $dpapiDll = Join-Path -Path $SpotifyDirectory -ChildPath 'dpapi.dll'
+  $btsDll = Join-Path -Path $SpotifyDirectory -ChildPath 'blockthespot.dll'
+  $elfDll = Join-Path -Path $SpotifyDirectory -ChildPath 'chrome_elf.dll'
   $configIni = Join-Path -Path $SpotifyDirectory -ChildPath 'config.ini'
-  return (Test-Path -LiteralPath $dpapiDll) -and (Test-Path -LiteralPath $configIni)
+  return (Test-Path -LiteralPath $btsDll) -and (Test-Path -LiteralPath $elfDll) -and (Test-Path -LiteralPath $configIni)
 }
 
 function Start-SpotifyWithRetry {
@@ -201,26 +202,41 @@ function Install-BlockTheSpotPatch {
   
   Stop-SpotifyProcesses -Context "Preparing for BlockTheSpot patch"
   
-  $elfPath = Join-Path -Path $WorkingDirectory -ChildPath 'chrome_elf.zip'
   try {
-    if ($Is64Bit) {
-      $uri = 'https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.zip'
+    if (-not $Is64Bit) {
+      Write-Warning "32-bit Spotify is not officially supported by the latest BlockTheSpot."
     }
-    else {
-      # Use a fixed older version for 32-bit as 'latest' may not support it
-      $uri = 'https://github.com/mrpond/BlockTheSpot/releases/download/2023.5.20.80/chrome_elf.zip'
-    }
-    Get-File -Uri $uri -TargetFile $elfPath
+    $elfUri = 'https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.dll'
+    $btsUri = 'https://github.com/mrpond/BlockTheSpot/releases/latest/download/blockthespot.dll'
+    $configUri = 'https://raw.githubusercontent.com/Othmane-ElAlami/BlockTheSpot/master/config.ini'
     
-    Expand-Archive -Force -LiteralPath $elfPath -DestinationPath $WorkingDirectory
-    Remove-Item -LiteralPath $elfPath -Force
+    $elfPath = Join-Path -Path $WorkingDirectory -ChildPath 'chrome_elf.dll'
+    $btsPath = Join-Path -Path $WorkingDirectory -ChildPath 'blockthespot.dll'
+    $configPath = Join-Path -Path $WorkingDirectory -ChildPath 'config.ini'
+    
+    Get-File -Uri $elfUri -TargetFile $elfPath
+    Get-File -Uri $btsUri -TargetFile $btsPath
+    Get-File -Uri $configUri -TargetFile $configPath
 
     Write-Host 'Patching Spotify...'
-    $patchFiles = @(
-      Join-Path -Path $WorkingDirectory -ChildPath 'dpapi.dll'
-      Join-Path -Path $WorkingDirectory -ChildPath 'config.ini'
-    )
+    
+    $originalElf = Join-Path -Path $SpotifyDirectory -ChildPath 'chrome_elf.dll'
+    $requiredElf = Join-Path -Path $SpotifyDirectory -ChildPath 'chrome_elf_required.dll'
+    
+    if (-not (Test-Path -LiteralPath $requiredElf)) {
+      if (Test-Path -LiteralPath $originalElf) {
+        Rename-Item -Path $originalElf -NewName 'chrome_elf_required.dll' -Force
+      }
+    }
+    
+    $patchFiles = @($elfPath, $btsPath, $configPath)
     Copy-Item -LiteralPath $patchFiles -Destination $SpotifyDirectory -Force
+    
+    $oldDpapi = Join-Path -Path $SpotifyDirectory -ChildPath 'dpapi.dll'
+    if (Test-Path -LiteralPath $oldDpapi) {
+      Remove-Item -LiteralPath $oldDpapi -Force -ErrorAction SilentlyContinue
+    }
+    
     Write-Host 'Patching Complete!' -ForegroundColor Green
   }
   catch {
