@@ -170,10 +170,13 @@ function Install-Spicetify {
       $spicetifyScript | Invoke-Expression
       
       Write-Host "Installing Spicetify Marketplace (Attempt $attempt/$MaxRetries)..." -ForegroundColor Green
-      $marketplaceScript = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.ps1" -TimeoutSec 30 -ErrorAction Stop
+      $marketplaceScriptContent = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/spicetify/spicetify-marketplace/main/resources/install.ps1" -TimeoutSec 30 -ErrorAction Stop
       
-      # Automate the confirmation prompt for Spicetify Marketplace by echoing Y
-      "Y`n" | Invoke-Expression $marketplaceScript
+      # The marketplace script uses $Host.UI.PromptForChoice which blocks automation.
+      # We replace the prompt call with a hardcoded return value of 0 (Yes).
+      $marketplaceScriptContent = $marketplaceScriptContent -replace '\$choice = \$Host\.UI\.PromptForChoice\(.*?\)', '$choice = 0'
+      
+      Invoke-Expression $marketplaceScriptContent
       
       Write-Host "Configuring and enabling lyrics-plus..." -ForegroundColor Green
       # The spicetify executable should be in PATH after install, but let's be safe
