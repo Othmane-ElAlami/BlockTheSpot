@@ -1,83 +1,33 @@
 <center>
-	<h1 align="center">BlockTheSpot</h1> 
-	<h4 align="center">A multi-purpose adblocker and skip-bypass for the <strong>Spotify for Windows (64 bit)</strong> </h4>
-    <h5 align="center">Please support Spotify by purchasing premium</h5>
-    <p align="center">
-        <strong>Last updated:</strong> 12 February 2026<br>
-        <strong>Last tested version:</strong> see `config.ini`
-    </p> 
+	<h1 align="center">BlockTheSpot + Spicetify Installer</h1> 
+	<h4 align="center">An automated installer for BlockTheSpot and Spicetify on <strong>Spotify for Windows (64 bit)</strong> </h4>
 </center>
 
-### Virus warning on windows defender issue
+## Features
 
-* the code is on Github, everyone can check it.
-* BTS utilize Appveyor, <https://www.appveyor.com/>.
-* Any code change on Github, Appveyor will build it and make release on Github.
-* false positive can happen. but don't trust me on this, try verify by compile your own BTS and compare with the release.
+* Installs the necessary BlockTheSpot patches
+* Installs Spicetify and the Spicetify marketplace
+* Blocks ads and unlocks most premium features
+* Features automatic Spotify client updates through the installation script
 
-### Features
+> [!WARNING]
+> This mod is for the [**Desktop Application**](https://www.spotify.com/download/windows/) of Spotify on Windows only and **not the Microsoft Store version**.
 
-* Unlocks most premium features except downloads and "Your DJ"
-* Lives through Spotify updates. No need to patch Spotify after every update anymore.
+## Installation
 
-#### Experimental features from developer mode
+You can install this mod by simply downloading and running the [install.bat](https://raw.githack.com/Othmane-ElAlami/BlockTheSpot/master/install.bat) file.
 
-- Click on the 2 dots in the top left corner of Spotify > Develop > Show debug window. Play around with the options.
-* Enable/disable feature by yourself in realtime and on demand.
-* Choose old/new theme(YLX).
-* Enable right sidebar.
-* Hide upgrade button on top bar.
-
-:warning: This mod is for the [**Desktop Application**](https://www.spotify.com/download/windows/) of Spotify on Windows only and **not the Microsoft Store version**.
-
-### Installation/Update
-
-* Just download and run [BlockTheSpot.bat](https://raw.githack.com/mrpond/BlockTheSpot/master/BlockTheSpot.bat)
-
-or
-
-#### Fully automated installation via PowerShell
+Alternatively, you can run the fully automated installation via PowerShell:
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-Expression "& { $(Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/mrpond/BlockTheSpot/master/install.ps1') } -UninstallSpotifyStoreEdition -UpdateSpotify"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-Expression "& { $(Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Othmane-ElAlami/BlockTheSpot/master/install.ps1') } -UninstallSpotifyStoreEdition"
 ```
 
-#### Manual installation/update
+## Uninstallation
 
-1. Browse to your Spotify installation folder `%APPDATA%\Spotify`
-2. Download `chrome_elf.zip` from [releases](https://github.com/mrpond/BlockTheSpot/releases)
-3. Unzip `dpapi.dll` and `config.ini` to Spotify directory.
-4. Download latest [blockthespot_settings.json](https://github.com/mrpond/BlockTheSpot/blob/master/blockthespot_settings.json) from github to Spotify directory.
+If you wish to completely restore Spotify to its original state, download and run the [uninstall.bat](https://raw.githack.com/Othmane-ElAlami/BlockTheSpot/master/uninstall.bat) script.
 
-### Uninstall
-
-* Just run [uninstall.bat](https://raw.githack.com/mrpond/BlockTheSpot/master/uninstall.bat)
-or
-* Remove `dpapi.dll` and `config.ini` from Spotify directory.
-or
-* Reinstall Spotify
-
-#### Installation with Spicetify (BlockTheSpot + Spicetify)
-
-* Just download and run [BlockTheSpot + Spicetify.bat](https://raw.githack.com/mrpond/BlockTheSpot/master/BlockTheSpot%20%2B%20Spicetify.bat)
-
-or
-
-#### Fully automated installation with Spicetify via PowerShell
-
-```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-Expression "& { $(Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/mrpond/BlockTheSpot/master/install.ps1') } -UninstallSpotifyStoreEdition -InstallSpicetify"
-```
-
-### BlockTheSpot with Spicetify Uninstall
-
-```powershell
-spicetify restore
-rmdir -r -fo $env:APPDATA\spicetify
-rmdir -r -fo $env:LOCALAPPDATA\spicetify
-rm -fo $env:APPDATA\spotify\dpapi.dll
-rm -fo $env:APPDATA\spotify\config.ini
-```
+This will restore Spicetify settings, remove the Spicetify directories (`%APPDATA%\spicetify` and `%LOCALAPPDATA%\spicetify`), and delete `dpapi.dll` and `config.ini` from the Spotify directory.
 
 ### Disabling Automatic Updates
 
@@ -89,10 +39,3 @@ The automatic update feature is enabled by default. To disable it:
 4. Save your changes and close the file.
 
 Automatic updates will now be disabled. If you wish to update, you'll need to do so manually.
-
-### Additional Notes
-
-* Installation script automatically detects if your Spotify client version is supported, or not. If the version is not supported, you will be prompted to update your Spotify client. To enforce client update, supply an optional parameter `UpdateSpotify` to the installation script.
-* [Spicetify](https://github.com/khanhas/spicetify-cli) users will need to reapply BlockTheSpot after applying a Spicetify themes/patches.
-* If the automatic install/uninstall scripts do not work, please contact [Nuzair46](https://github.com/Nuzair46).
-* For more support and discussions, join our [Discord server](https://discord.gg/eYudMwgYtY).

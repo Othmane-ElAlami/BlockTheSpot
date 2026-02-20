@@ -1,8 +1,6 @@
 @echo off
 echo ========================================
-echo  BlockTheSpot Uninstaller
-echo ========================================
-echo Authors: @rednek46, @Othmane-ElAlami
+echo  BlockTheSpot + Spicetify Uninstaller
 echo ========================================
 echo.
 
@@ -13,6 +11,10 @@ if /i "%UserInput%"=="y" (
     taskkill /F /IM "Spotify.exe" /T >NUL 2>&1
     timeout /t 2 /nobreak >NUL
     
+    echo Restoring Spicetify and removing its files...
+    powershell -ExecutionPolicy Bypass -Command "spicetify restore; rmdir -r -fo $env:APPDATA\spicetify -ErrorAction SilentlyContinue; rmdir -r -fo $env:LOCALAPPDATA\spicetify -ErrorAction SilentlyContinue"
+    echo - Removed Spicetify
+
     echo Removing BlockTheSpot files...
     if exist "%APPDATA%\Spotify\dpapi.dll" (
         del /q "%APPDATA%\Spotify\dpapi.dll" >NUL 2>&1
@@ -36,7 +38,7 @@ if /i "%UserInput%"=="y" (
     )
     
     echo.
-    echo BlockTheSpot uninstallation completed!
+    echo Uninstallation completed!
     echo You can now use Spotify normally.
     echo.
 ) else (
